@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.1.0
 // @description  Bonsai UI: Monochromatic MSFS-style HUD for GeoFS
-// @author       Fendrixx
+// @author       Fendrixx, SeaBus
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://*.geo-fs.com/geofs.php*
 // @grant        none
@@ -972,7 +972,7 @@
         overflow: hidden;
     }
     #msfs-adi canvas { display: block; width: 100%; height: 100%; }
-    
+
     #msfs-vsi {
         position: absolute; right: 100%; top: 20px; bottom: 20px; width: 48px;
         margin-right: -1px;
@@ -1273,7 +1273,7 @@
             </div>
 
             <div class="panel" id="msfs-spd">
-                <div class="top-label">TAS</div>
+                <div class="top-label">KIAS</div>
                 <div class="tape"><div class="strip" id="spd-strip">${buildSpeedTicks()}</div></div>
                 <div class="center" id="v-ias">0</div>
                 <div class="bot-label">KTS</div>
@@ -1575,22 +1575,11 @@
             }
         } catch (e) { }
 
-        // ── True Airspeed (GeoFS 4.0) ──────────────────────────────────────
-        // GeoFS 4.0 switched the speed display from IAS to TAS.
-        // Try ktas / trueAirspeed first, fall back to kias / ias.
-        // ── True Airspeed (GeoFS 4.0) ──────────────────────────────────────
-        let tas = 0;
-        try {
-            const trueAS = window.geofs?.aircraft?.instance?.trueAirSpeed;
-            if (typeof trueAS === 'number') {
-                tas = trueAS;
-            } else {
-                tas = av.ktas ?? av.trueAirspeed ?? av.tas ?? av.kias ?? av.ias ?? 0;
-            }
-        } catch (e) {
-            tas = av.ktas ?? av.trueAirspeed ?? av.tas ?? av.kias ?? av.ias ?? 0;
-        }
-        if (typeof tas !== 'number' || isNaN(tas)) tas = av.kias ?? av.ias ?? 0;
+        // ── Indicated Airspeed (GeoFS 4.0) ────────────────────────────────
+        // In GeoFS 4.0, av.kias returns true IAS (lower at altitude).
+        // Use it directly, same approach as the standard info-display userscript.
+        let tas = av.kias ?? av.ias ?? 0;
+        if (typeof tas !== 'number' || isNaN(tas)) tas = 0;
 
         // ── Speed limits: Vne / Vno / Vs ───────────────────────────────────
         // Read from aircraft definition (or animation values as fallback).
