@@ -964,6 +964,14 @@
         background: #fff; pointer-events: none; z-index: 2;
         box-shadow: 0 0 5px rgba(255,255,255,0.9);
     }
+    #msfs-spd .spd-vfe-line {
+        position: absolute; right: -1px; width: 14px; height: 3px;
+        background: #fff; pointer-events: none; z-index: 2;
+        box-shadow: 0 0 4px rgba(255,255,255,0.7);
+    }
+    #msfs-spd .spd-zone-wht {
+        background: rgba(220,220,220,0.35);
+    }
     #msfs-adi {
         left: 154px; bottom: calc(var(--bonsai-bottom) + 110px);
         width: 140px; height: 140px;
@@ -1028,10 +1036,12 @@
         // Speed-limit zone bars (positioned absolutely within strip, scrolls with tape)
         html += '<div class="spd-zone spd-zone-red" id="spd-zone-red" style="display:none"></div>';
         html += '<div class="spd-zone spd-zone-ylw" id="spd-zone-ylw" style="display:none"></div>';
+        html += '<div class="spd-zone spd-zone-wht" id="spd-zone-wht" style="display:none"></div>';
         html += '<div class="spd-zone spd-zone-grn" id="spd-zone-grn" style="display:none"></div>';
         html += '<div class="spd-vne-line" id="spd-vne-line" style="display:none"></div>';
         html += '<div class="spd-vno-line" id="spd-vno-line" style="display:none"></div>';
-        html += '<div class="spd-vs-line" id="spd-vs-line" style="display:none"></div>';
+        html += '<div class="spd-vfe-line" id="spd-vfe-line" style="display:none"></div>';
+        html += '<div class="spd-vs-line"  id="spd-vs-line"  style="display:none"></div>';
         return html;
     }
     function buildAltTicks() {
@@ -1584,24 +1594,37 @@
         // ── Speed limits: Vne / Vno / Vs ───────────────────────────────────
         // Read from aircraft definition (or animation values as fallback).
         // GeoFS may store values in knots OR m/s; heuristic: < 30 → m/s → convert.
-        let vne = null, vno = null, vs = null;
+        let vne = null, vno = null, vs = null, vfe = null;
         let isOverspeed = !!(av.overspeed ?? av.isOverspeed ?? false);
         try {
             const getNum = (v) => { const n = Number(v); return (isNaN(n) || n <= 0) ? null : n; };
             const def = g.aircraft?.instance?.definition || {};
             const setup = g.aircraft?.instance?.setup || {};
+            const Vsp = def.Vspeeds ?? setup.Vspeeds ?? {};
 
-            let rVne = getNum(def.maxSpeed) ?? getNum(def.safeSpeed) ?? getNum(def.vne) ?? getNum(setup.maxSpeed) ?? getNum(av.vne) ?? getNum(av.maxSpeed) ?? getNum(av.overspeedSpeed);
+            // Vne：優先用 animation.values 大寫欄位（GeoFS 4.x 直接提供）
+            let rVne = getNum(av.VNE) ?? getNum(av.VMO) ?? getNum(av.MMO)
+                    ?? getNum(def.maxSpeed) ?? getNum(def.safeSpeed) ?? getNum(def.vne)
+                    ?? getNum(setup.maxSpeed) ?? getNum(av.maxSpeed) ?? getNum(av.overspeedSpeed);
             if (rVne) vne = rVne < 30 ? rVne * 1.94384 : rVne;
 
-            let rVs = getNum(def.stallSpeed) ?? getNum(def.vs1) ?? getNum(def.vs) ?? getNum(def.minSpeed) ?? getNum(setup.minSpeed) ?? getNum(av.stallSpeed) ?? getNum(av.vs);
+            // Vs：優先 VS0（落地構型），再 VS（clean）
+            let rVs = getNum(av.VS0) ?? getNum(av.VS)
+                   ?? getNum(Vsp.VS0) ?? getNum(Vsp.VS)
+                   ?? getNum(def.stallSpeed) ?? getNum(def.vs1) ?? getNum(def.vs)
+                   ?? getNum(def.minSpeed) ?? getNum(setup.minSpeed) ?? getNum(av.stallSpeed);
             if (rVs) vs = rVs < 20 ? rVs * 1.94384 : rVs;
+
+            // Vfe：最大放襟翼速度
+            let rVfe = getNum(av.VFE) ?? getNum(def.flapSpeed) ?? getNum(def.vfe);
+            if (rVfe) vfe = rVfe < 30 ? rVfe * 1.94384 : rVfe;
 
             if (!vne) vne = Math.max(160, tas * 1.2);
 
             if (vne) {
                 vne = Math.min(1000, Math.max(30, vne));
-                vno = vne * 0.83;                        // Vno ≈ 83 % of Vne
+                // Vno：animation.values 直接有就用，沒有才推算
+                vno = getNum(av.VNO) ?? (vne * 0.83);
                 if (!vs) vs = Math.max(10, Math.min(vno * 0.7, 40));
             }
         } catch (e) { }
@@ -1621,7 +1644,7 @@
             engineOn,
             windSpeed: windSpeed,
             windDirection,
-            vne, vno, vs,
+            vne, vno, vs, vfe,
             isOverspeed,
             gearTransit,
             gearDirection,
@@ -1633,19 +1656,21 @@
     // Positions the coloured PFD-style speed-arc bands inside the tape strip.
     // The bands scroll with the strip, so their top/height are offsets within
     // the full strip content (400 kts at y=0, each 10 kts = 24 px).
-    function updateSpdZones(vne, vno, vs) {
+    function updateSpdZones(vne, vno, vs, vfe) {
         const PX = 2.4;                        // px per knot  (24 px / 10 kts)
         const spdY = v => (1000 - v) * PX;     // y within strip for speed v
 
         const zRed = document.getElementById('spd-zone-red');
         const zYlw = document.getElementById('spd-zone-ylw');
+        const zWht = document.getElementById('spd-zone-wht');
         const zGrn = document.getElementById('spd-zone-grn');
         const vLine = document.getElementById('spd-vne-line');
         const vnoLine = document.getElementById('spd-vno-line');
+        const vfeLine = document.getElementById('spd-vfe-line');
         const vsLine = document.getElementById('spd-vs-line');
 
         if (!vne) {
-            [zRed, zYlw, zGrn, vLine, vnoLine, vsLine].forEach(el => { if (el) el.style.display = 'none'; });
+            [zRed, zYlw, zWht, zGrn, vLine, vnoLine, vfeLine, vsLine].forEach(el => { if (el) el.style.display = 'none'; });
             return;
         }
 
@@ -1678,6 +1703,25 @@
             vsLine.style.display = '';
             vsLine.style.top = spdY(vs) + 'px';
         }
+
+        // VFE 白色刻度線
+        if (vfeLine && vfe) {
+            vfeLine.style.display = '';
+            vfeLine.style.top = spdY(vfe) + 'px';
+        } else if (vfeLine) {
+            vfeLine.style.display = 'none';
+        }
+
+        // 白色區段：Vs ~ Vfe（有效的放襟翼速度範圍）
+        if (zWht && vfe && vs) {
+            const t = spdY(vfe);
+            const h = spdY(vs) - t;
+            if (h > 0) {
+                zWht.style.display = '';
+                zWht.style.top = t + 'px';
+                zWht.style.height = h + 'px';
+            } else { zWht.style.display = 'none'; }
+        } else if (zWht) { zWht.style.display = 'none'; }
 
         // Yellow zone — Vno to Vne (caution / structural limit)
         if (zYlw && vno) {
@@ -1725,7 +1769,7 @@
             }
 
             // ── Speed limit zones (coloured PFD arcs) ──────────────────────
-            updateSpdZones(s.vne, s.vno, s.vs);
+            updateSpdZones(s.vne, s.vno, s.vs, s.vfe);
 
             // Speed readout warning colour (caution / overspeed)
             // Speed readout warning colour (caution / overspeed)
